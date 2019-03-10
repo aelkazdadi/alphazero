@@ -1,0 +1,65 @@
+\documentclass[11pt]{article}
+
+\usepackage{amsmath,amsfonts,amssymb}
+\usepackage[utf8]{inputenc}
+\usepackage{microtype}
+
+\title{Mastering Chess and Shogi by Self-Play with a General Reinforcement
+Learning Algorithm: Implementation Report}
+\author{Aamr \textsc{El Kazdadi}, Ahmed \textsc{El Alaoui Talibi}, El Mahdi
+\textsc{Chayti}}
+\date{}
+\begin{document}
+\maketitle
+AlphaZero is an algorithm designed to master the games of go, chess and shogi,
+by \textit{tabula rasa} reinforcement learning. It accomplishes this by constant
+self play.\\
+Since the state space of these games is too large to enumerate, the value and
+policy functions are estimated using a neural network, that takes as an input
+the state of the board, and outputs the estimated value and a prior probability
+on the possible moves.\\
+These probabilties aren't used directly during play, however. Instead, a Monte Carlo
+Tree Search is executed during each move, guided by the neural network, and tends
+to select much stronger moves than the raw move probabilities $f_\theta(s)$.\\
+This search functions as a powerful \textit{policy improvement} operator, and
+defines a stronger policy $\pi(s, a)$, proportional to the number of times
+the action $a$ was used from state $s$ during the MCTS.\\
+A MCTS is performed by building a tree, with the current state at the root.
+We repeatedly navigate the tree, starting at the root, and choosing the actions
+so as to maximize a quantity $Q(s,a) + U(s,a)$, where $Q$ is the estimated value
+of a given action, $U(s,a) \propto p_\theta(s,a)/(1+N(s,a))$ and $N(s,a)$ is the
+number of times action $a$ was taken from state $s$ so far.
+
+Once a leaf node is reached, we check whether it's a terminal node (i.e., the
+game is over) or not. If it is, its value is determined by the winner of the
+game. If not, its actions and the states they lead to are added to the tree as
+children of the leaf, and the value of the leaf along with the prior
+probabilities $p_\theta(s, \cdot)$ of the actions are estimated by the neural
+network. The value of the current node is then propagated along the path that
+was taken from the root until it was reached.
+
+The improvement of the policy is done as follows: A batch of episodes is
+played, in which the model plays against a frozen copy of it. Both players
+select their moves according to the results of the MCTS, each guided by its own
+neural network.\\
+The results of the search of the active player are saved during each move,
+and the results of the game are appended to them eventually, once the game
+is decided.\\
+These results are used to create a dataset of tuples $(s, \pi(s,\cdot), v^\star(s))$,
+and the neural network learns from it by minimizing the loss function
+\[
+    L(\theta) = \sum (v_\theta(s)-v^\star(s))^2 - \pi(s, \cdot)^\top \log
+    p_\theta + c\lVert \theta\rVert^2.
+\]
+
+This process continues until the neural network is strong enough to
+consistently beat the frozen copy, after which the copy is updated with the new
+parameters and the entire process is repeated.
+
+Unfortunately, simulating the games on a single thread on a typical desktop
+takes too long to show any noticeable results. On top of that, Python was
+chosen to implement the algorithm, to focus on simplicity instead of efficiency
+of the code. And so it turns out to be too slow to showcase any real results,
+and serves only as a proof of concept.
+
+\end{document}

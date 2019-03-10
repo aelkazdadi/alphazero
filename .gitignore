@@ -1,0 +1,8 @@
+__pycache__/*
+*.pgn
+*.pdf
+*.dvi
+*.aux
+*.log
+*.fls
+*.fdb_latexmk
