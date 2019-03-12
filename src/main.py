@@ -1,92 +1,22 @@
-import numpy as np
 import chess
+
+import numpy as np
+from math import sqrt
 from scipy.sparse import csr_matrix
 from scipy.sparse import vstack
-import keras.backend as K
-from keras import regularizers
-from keras.models import Sequential
-from keras.layers import Dense, Activation
 
+game = chess
 
-C1 = 10.
-C2 = 0.01
+C = 1.
 
+State = game.State
+Action = game.Action
+initial_state = game.initial_state
+white_header = game.white_header
+black_header = game.black_header
 
-def loss(y_true, y_pred):
-    return (K.sum(
-        (y_true[:, 0] - y_pred[:, 0])**2
-        - K.dot(y_true[:, 1:], K.log(y_pred[:, 1:]))))
-
-
-model = Sequential()
-model.add(Dense(16385, input_shape=(512,),
-                kernel_regularizer=regularizers.l2(C2),
-                bias_regularizer=regularizers.l2(C2)))
-model.add(Activation('softmax'))
-model.compile(loss=loss, optimizer='adam')
-
-old_model = Sequential()
-old_model.add(Dense(16385, input_shape=(512,),
-                    kernel_regularizer=regularizers.l2(C2),
-                    bias_regularizer=regularizers.l2(C2)))
-old_model.add(Activation('softmax'))
-old_model.compile(loss=loss, optimizer='adam')
-
-
-def initial_state():
-    return State(chess.Board())
-
-
-class State:
-    def __init__(self, s):
-        self.s = s
-
-    def play(self, action):
-        self.s.push(action.a)
-        copy = self.s.copy()
-        self.s.pop()
-        return State(copy)
-
-    def flip_board(self):
-        return State(self.s.mirror())
-
-    def get_actions(self):
-        actions = list(self.s.legal_moves)
-        return [Action(a) for a in actions]
-
-    def is_terminal(self):
-        is_over = self.s.is_game_over()
-        if is_over:
-            result = self.s.result
-            if result == '1-0':
-                return (True, 1)
-            elif result == '0-1':
-                return (True, -1)
-            else:
-                return (True, 0)
-        else:
-            return (False, 0)
-
-    def as_input(self):
-        v = np.zeros((64, 8))
-        for i in range(64):
-            piece = self.s.piece_at(i)
-            piece_type = self.s.piece_type_at(i)
-            if piece is not None:
-                v[i][0] = int(piece.color)
-                v[i][1] = 1 - int(piece.color)
-                for j in range(2, 8):
-                    v[i][j] = int(piece_type+1 == j)
-        return v.flatten()
-
-
-class Action:
-    def __init__(self, a):
-        self.a = a
-
-    def index(self):
-        promotion = (self.a.promotion or 2) - 2
-        return self.a.from_square + 64*self.a.to_square + 4096*promotion
+model = game.model
+old_model = game.model
 
 
 class Tree:
@@ -97,22 +27,16 @@ class Tree:
         self.children = []
 
 
-def proba_list(state, actions, dense_probas):
-    probas = []
-    for action in actions:
-        proba = dense_probas[action.index()]
-        probas.append(proba)
-    return probas
-
-
-def mcts(state, neural_network, n_iter=500):
+def mcts(state, neural_network, n_iter=100, debug=False):
     tree = Tree(state)
 
     for _ in range(n_iter):
         node = tree
         children = node.children
         while children != []:
-            ucb_index = np.argmax([a.Q + C1*a.P/(1+a.N) for a in node.actions])
+            sqrtN_tot = sqrt(sum([a.N for a in node.actions]))
+            ucb_index = np.argmax([a.Q + C*a.P*sqrtN_tot/(1+a.N)
+                                   for a in node.actions])
 
             node = children[ucb_index]
             children = node.children
@@ -120,24 +44,25 @@ def mcts(state, neural_network, n_iter=500):
         terminal = node.state.is_terminal()
         if terminal[0]:
             value = terminal[1]
+
         else:
             node.actions = node.state.get_actions()
             node.children = [Tree(node.state.play(a).flip_board(),
                                   parent=(node, a)) for a in node.actions]
 
-            nn_output = neural_network.predict(
-                node.state.as_input()[np.newaxis, :])[0]
-            value = 2*nn_output[0] - 1
-            prior = proba_list(node.state, node.actions, nn_output[1:])
+            value, prior = game.value_prior(node.state, node.actions,
+                                            neural_network)
 
             for (i, a) in enumerate(node.actions):
                 a.P = prior[i]
                 a.N = 0
                 a.Q = 0
+
         while node.parent is not None:
             value = -value
             N = node.parent[1].N
             Q = node.parent[1].Q
+
             node.parent[1].Q = N/(N+1) * Q + value/(N+1)
             node.parent[1].N += 1
 
@@ -145,26 +70,41 @@ def mcts(state, neural_network, n_iter=500):
     policy = [action.N for action in node.actions]
     if policy == []:
         return []
+
+    if debug:
+        for action in node.actions:
+            Q = "{:.3e}".format(action.Q)
+            P = "{:.3e}".format(action.P)
+            if Q[0] != "-":
+                Q = "+"+Q
+            if P[0] != "-":
+                P = "+"+P
+            print("{:<5}".format(action.N),
+                  "{:<10}".format(Q),
+                  "{:<10}".format(P),
+                  action)
+
     return np.array(policy)/sum(policy)
 
 
 def one_episode(side, max_turns=10000):
     data = []
-    state = initial_state()
-    if side == -1:
-        state = state.flip_board()
-    game_over = False
+    state = initial_state
 
     i = 0
+    if side == -1:
+        state = state.flip_board()
+        i += 1
+    game_over = False
+
     while not game_over and i < max_turns:
         if i % 2 == 0:
-            print(state.s)
-        else:
-            print(state.flip_board().s)
-        print()
-        if i % 2 == 0:
+            print(white_header)
+            print(state)
             policy = mcts(state, model)
         else:
+            print(black_header)
+            print(state.flip_board())
             policy = mcts(state, old_model)
         actions = state.get_actions()
         action = np.random.choice(actions, p=policy)
@@ -180,33 +120,40 @@ def one_episode(side, max_turns=10000):
     if i == max_turns:
         return None, None
 
-    result = result[1]
+    result = (i + (result[1]+1)//2) % 2
+    print()
+    if i % 2 == 0:
+        print(state)
+        print("Black victory")
+    else:
+        print(state.flip_board())
+        print("White victory")
+    print(result)
     for i in range(len(data)):
-        result = -result
-        data[0-i][-1] = (result+1)//2
+        data[i][3] = result
 
-    inputs = np.zeros((len(data), 512))
+    inputs = np.zeros((len(data), 580))
     dat = []
     indices = []
     indptr = [0]
-    for datum in data:
+    for (i, datum) in enumerate(data):
         inputs[i] = datum[0].as_input()
 
         indices.append(0)
-        indices.extend([action.index() for action in datum[1]])
+        indices.extend([1 + action.index() for action in datum[1]])
 
-        indptr.append(len(datum[1])+1)
+        indptr.append(indptr[-1] + len(datum[1])+1)
 
         dat.append(datum[3])
         dat.extend(datum[2])
 
-    outputs = csr_matrix((dat, indices, indptr), shape=(len(data), 16385))
+    outputs = csr_matrix((dat, indices, indptr), shape=(len(data), 8193))
     return inputs, outputs
 
 
 def dataset(n=200):
-    inputs = np.zeros((0, 512))
-    outputs = csr_matrix((0, 16385))
+    inputs = np.zeros((0, 580))
+    outputs = csr_matrix((0, 8193))
     for _ in range(n):
         i, o = one_episode(side=np.random.choice([-1, 1]))
         if i is not None and o is not None:
