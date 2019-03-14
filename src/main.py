@@ -1,4 +1,4 @@
-import tictactoe as game
+import connectfour as game
 
 import numpy as np
 from math import sqrt
@@ -6,7 +6,7 @@ from scipy.sparse import csr_matrix
 from scipy.sparse import vstack
 
 C = 1.
-n_iter = 30
+n_iter = 80
 
 State = game.State
 Action = game.Action
@@ -248,6 +248,6 @@ def train(train_iter=20, model=model, old_model=old_model, n_episodes=200,
         print("Winrate:", winrate)
 
 
-train()
-res = dataset(1000, verbose=0, C=0)
-print("Winrate:", winrate)
+# train()
+# res = dataset(1000, verbose=0, C=0)
+# print("Winrate:", winrate)
