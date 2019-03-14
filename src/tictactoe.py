@@ -2,7 +2,6 @@ import numpy as np
 from typing import List
 
 import keras.backend as K
-from keras import regularizers
 from keras.models import Sequential, clone_model
 from keras.layers import Dense, Activation
 
@@ -105,10 +104,20 @@ class Action:
     def __init__(self, square):
         self.square = square
 
+    def get_input():
+        row = 2-int(input("Row: "))
+        col = int(input("Col: "))
+        return Action(col + 3*row)
+
     def __str__(self):
         col = self.square % 3
         row = (self.square)//3
         return f"{row}-{col}"
+
+    def __eq__(self, other):
+        if other is None:
+            return False
+        return self.square == other.square
 
     def __repr__(self):
         return self.__str__()
@@ -118,6 +127,7 @@ class Action:
         dimension of the neural network.
         """
         return self.square
+
 
 INIT_STATE = [0]*9
 

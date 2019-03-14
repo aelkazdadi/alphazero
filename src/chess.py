@@ -310,6 +310,24 @@ class Action:
         self.to_square = to_square
         self.promotion = promotion
 
+    def get_input():
+        from_row = int(input("Start Row: "))
+        from_col = int(input("Start Col: "))
+        from_square = from_col + 8*from_row
+
+        to_row = int(input("End Row: "))
+        to_col = int(input("End Col: "))
+        to_square = to_col + 8*to_row
+
+        promotion = WHITE_QUEEN
+        if to_row == 7:
+            print("Input a promotion if needed: Q(ueen) or K(night)")
+            inp = input()
+            if inp == "K":
+                promotion = WHITE_KNIGHT
+
+        return Action(from_square, to_square, promotion)
+
     def __str__(self):
         from_row = self.from_square // 8
         from_col = self.from_square % 8
@@ -320,6 +338,13 @@ class Action:
 
     def __repr__(self):
         return self.__str__()
+
+    def __eq__(self, other):
+        if other is None:
+            return False
+        return (self.from_square == other.from_square
+                and self.to_square == other.to_square
+                and self.promotion == other.promotion)
 
     def flip_action(self):
         from_row = self.from_square // 8
