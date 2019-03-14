@@ -20,7 +20,7 @@ class State:
         self.s = state_vector
 
     def __str__(self) -> str:
-        string = "+---+---+---+---+---+---+---+---+\n"
+        string = "\n+---+---+---+---+---+---+---+---+\n"
         for row in range(7, -1, -1):
             string = string + "| "
             for column in range(8):
@@ -29,7 +29,7 @@ class State:
             string = string + "\n+---+---+---+---+---+---+---+---+\n"
         return string
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return self.__str__()
 
     def __eq__(self, other: "State") -> bool:
@@ -366,17 +366,19 @@ def loss(y_true, y_pred):
         - K.dot(y_true[:, 1:], K.log(y_pred[:, 1:]))))
 
 
+input_size = 580
+output_size = 8193
 C2 = 0.01
 
 model = Sequential()
-model.add(Dense(8193, input_shape=(580,),
+model.add(Dense(output_size, input_shape=(input_size,),
                 kernel_regularizer=regularizers.l2(C2),
                 bias_regularizer=regularizers.l2(C2)))
 model.add(Activation('softmax'))
 model.compile(loss=loss, optimizer='adam')
 
 old_model = Sequential()
-old_model.add(Dense(8193, input_shape=(580,),
+old_model.add(Dense(output_size, input_shape=(input_size,),
                     kernel_regularizer=regularizers.l2(C2),
                     bias_regularizer=regularizers.l2(C2)))
 old_model.add(Activation('softmax'))

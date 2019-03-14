@@ -1,11 +1,9 @@
-import chess
+import tictactoe as game
 
 import numpy as np
 from math import sqrt
 from scipy.sparse import csr_matrix
 from scipy.sparse import vstack
-
-game = chess
 
 C = 1.
 
@@ -15,8 +13,12 @@ initial_state = game.initial_state
 white_header = game.white_header
 black_header = game.black_header
 
+input_size = game.input_size
+output_size = game.output_size
 model = game.model
-old_model = game.model
+old_model = game.old_model
+
+value_prior = game.value_prior
 
 
 class Tree:
@@ -27,7 +29,7 @@ class Tree:
         self.children = []
 
 
-def mcts(state, neural_network, n_iter=100, debug=False):
+def mcts(state, neural_network, n_iter=100, debug=False, C=C):
     tree = Tree(state)
 
     for _ in range(n_iter):
@@ -50,7 +52,7 @@ def mcts(state, neural_network, n_iter=100, debug=False):
             node.children = [Tree(node.state.play(a).flip_board(),
                                   parent=(node, a)) for a in node.actions]
 
-            value, prior = game.value_prior(node.state, node.actions,
+            value, prior = value_prior(node.state, node.actions,
                                             neural_network)
 
             for (i, a) in enumerate(node.actions):
@@ -87,7 +89,7 @@ def mcts(state, neural_network, n_iter=100, debug=False):
     return np.array(policy)/sum(policy)
 
 
-def one_episode(side, max_turns=10000):
+def one_episode(side, max_turns=10000, verbose=0, C=C):
     data = []
     state = initial_state
 
@@ -99,13 +101,15 @@ def one_episode(side, max_turns=10000):
 
     while not game_over and i < max_turns:
         if i % 2 == 0:
-            print(white_header)
-            print(state)
-            policy = mcts(state, model)
+            if verbose > 1:
+                print(white_header, end='')
+                print(state)
+            policy = mcts(state, model, C=C)
         else:
-            print(black_header)
-            print(state.flip_board())
-            policy = mcts(state, old_model)
+            if verbose > 1:
+                print(black_header, end='')
+                print(state.flip_board())
+            policy = mcts(state, old_model, C=C)
         actions = state.get_actions()
         action = np.random.choice(actions, p=policy)
 
@@ -120,19 +124,31 @@ def one_episode(side, max_turns=10000):
     if i == max_turns:
         return None, None
 
-    result = (i + (result[1]+1)//2) % 2
-    print()
-    if i % 2 == 0:
-        print(state)
-        print("Black victory")
+    if result[1] == 0:
+        result = .5
+        if verbose > 1:
+            if i % 2 == 0:
+                print(state)
+            else:
+                print(state.flip_board())
+        if verbose > 0:
+            print("Draw")
     else:
-        print(state.flip_board())
-        print("White victory")
-    print(result)
+        result = (i + (result[1]+1)//2) % 2
+        if i % 2 == 0:
+            if verbose > 1:
+                print(state)
+            if verbose > 0:
+                print("Black victory")
+        else:
+            if verbose > 1:
+                print(state.flip_board())
+            if verbose > 0:
+                print("White victory")
     for i in range(len(data)):
         data[i][3] = result
 
-    inputs = np.zeros((len(data), 580))
+    inputs = np.zeros((len(data), input_size))
     dat = []
     indices = []
     indptr = [0]
@@ -147,15 +163,62 @@ def one_episode(side, max_turns=10000):
         dat.append(datum[3])
         dat.extend(datum[2])
 
-    outputs = csr_matrix((dat, indices, indptr), shape=(len(data), 8193))
+    outputs = csr_matrix((dat, indices, indptr), shape=(len(data), output_size))
     return inputs, outputs
 
 
-def dataset(n=200):
-    inputs = np.zeros((0, 580))
-    outputs = csr_matrix((0, 8193))
+winrate = .5
+
+
+def dataset(n=200, verbose=0, C=C):
+    inputs = np.zeros((0, input_size))
+    outputs = csr_matrix((0, output_size))
+
+    win = 0
+    win_loss = 0
     for _ in range(n):
-        i, o = one_episode(side=np.random.choice([-1, 1]))
+        side = np.random.choice([1, -1])
+        if verbose > 0:
+            print(side)
+        i, o = one_episode(side, verbose=verbose)
         if i is not None and o is not None:
-            inputs = np.vstack(inputs, i)
-            outputs = vstack(outputs, o)
+            inputs = np.vstack((inputs, i))
+            outputs = vstack((outputs, o))
+
+        if o[0, 0] == 1.:
+            win += 1
+        if o[0, 0] != .5:
+            win_loss += 1
+    global winrate
+    winrate = win/win_loss
+    return inputs, outputs
+
+
+def compare_models():
+    b = True
+    for i in range(3):
+        b = b and (model.get_weights()[i] == old_model.get_weights()[i]).all()
+    print(b)
+
+
+def play_bot(state, model, C=C):
+    state = state.flip_board()
+    actions = state.get_actions()
+    policy = mcts(state, model, C=C)
+    action = actions[np.argmax(policy)]
+    return state.play(action).flip_board()
+
+
+n = 500
+
+for i in range(30):
+    compare_models()
+    res = dataset(n, verbose=0, C= 1.)
+    model.fit(res[0], res[1], epochs=100, verbose=0)
+    if winrate > .6:
+        old_model.set_weights(model.get_weights())
+    print("Winrate:", winrate)
+
+print()
+res = dataset(4*n, verbose=0, C=0)
+print("Winrate:", winrate)
