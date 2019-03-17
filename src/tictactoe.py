@@ -4,6 +4,7 @@ from typing import List
 import keras.backend as K
 from keras.models import Sequential, clone_model
 from keras.layers import Dense, Activation
+from keras import regularizers
 
 symbols = {0: " ", 1: "O", -1: "X"}
 
@@ -170,12 +171,17 @@ def value_prior(state: State, actions: List[Action], neural_network):
 # Neural network architecture
 input_size = 18
 output_size = 10
+C2 = .001
 
 model = Sequential()
-model.add(Dense(256, input_dim=input_size,))
+model.add(Dense(512, input_shape=(input_size,),
+                kernel_regularizer=regularizers.l2(C2),
+                bias_regularizer=regularizers.l2(C2)))
 model.add(Activation('relu'))
 
-model.add(Dense(output_size))
+model.add(Dense(output_size,
+                kernel_regularizer=regularizers.l2(C2),
+                bias_regularizer=regularizers.l2(C2)))
 model.add(Activation('softmax'))
 model.compile(loss=loss, optimizer='adam')
 

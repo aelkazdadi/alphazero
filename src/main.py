@@ -1,12 +1,13 @@
-import connectfour as game
+from tqdm import tqdm
+import tictactoe as game
 
 import numpy as np
 from math import sqrt
 from scipy.sparse import csr_matrix
 from scipy.sparse import vstack
 
-C = 1.
-n_iter = 80
+c_mcts = 3.
+mcts_iter_default = 80
 
 State = game.State
 Action = game.Action
@@ -30,10 +31,11 @@ class Tree:
         self.children = []
 
 
-def mcts(state, neural_network, n_iter=n_iter, debug=False, C=C):
+def mcts(state, neural_network, mcts_iter=mcts_iter_default,
+         debug=False, C=c_mcts):
     tree = Tree(state)
 
-    for _ in range(n_iter):
+    for _ in range(mcts_iter):
         node = tree
         children = node.children
         while children != []:
@@ -54,7 +56,7 @@ def mcts(state, neural_network, n_iter=n_iter, debug=False, C=C):
                                   parent=(node, a)) for a in node.actions]
 
             value, prior = value_prior(node.state, node.actions,
-                                            neural_network)
+                                       neural_network)
 
             for (i, a) in enumerate(node.actions):
                 a.P = prior[i]
@@ -90,7 +92,10 @@ def mcts(state, neural_network, n_iter=n_iter, debug=False, C=C):
     return np.array(policy)/sum(policy)
 
 
-def one_episode(side, max_turns=10000, verbose=0, n_iter=n_iter, C=C):
+def one_episode(side, max_turns=10000, verbose=0,
+                mcts_iter=mcts_iter_default, C=c_mcts,
+                model=model, old_model=old_model,
+                exploration=True):
     data = []
     state = initial_state
 
@@ -105,14 +110,18 @@ def one_episode(side, max_turns=10000, verbose=0, n_iter=n_iter, C=C):
             if verbose > 1:
                 print(white_header, end='')
                 print(state)
-            policy = mcts(state, model, n_iter=n_iter, C=C)
+            policy = mcts(state, model, mcts_iter=mcts_iter, C=C)
         else:
             if verbose > 1:
                 print(black_header, end='')
                 print(state.flip_board())
-            policy = mcts(state, old_model, n_iter=n_iter, C=C)
+            policy = mcts(state, old_model, mcts_iter=mcts_iter, C=C)
         actions = state.get_actions()
-        action = np.random.choice(actions, p=policy)
+
+        if exploration:
+            action = np.random.choice(actions, p=policy)
+        else:
+            action = actions[np.argmax(policy)]
 
         if i % 2 == 0:
             data.append([state, actions, policy, None])
@@ -146,6 +155,7 @@ def one_episode(side, max_turns=10000, verbose=0, n_iter=n_iter, C=C):
                 print(state.flip_board())
             if verbose > 0:
                 print("White victory")
+
     for i in range(len(data)):
         data[i][3] = result
 
@@ -164,45 +174,47 @@ def one_episode(side, max_turns=10000, verbose=0, n_iter=n_iter, C=C):
         dat.append(datum[3])
         dat.extend(datum[2])
 
-    outputs = csr_matrix((dat, indices, indptr), shape=(len(data), output_size))
+    outputs = csr_matrix((dat, indices, indptr),
+                         shape=(len(data), output_size))
     return inputs, outputs
 
 
-winrate = .5
-
-
-def dataset(n=200, verbose=0, n_iter=n_iter, C=C):
+def dataset(n=200, verbose=0, mcts_iter=mcts_iter_default, C=c_mcts,
+            model=model, old_model=old_model, exploration=True):
     inputs = np.zeros((0, input_size))
     outputs = csr_matrix((0, output_size))
 
     win = 0
-    win_loss = 0
-    for _ in range(n):
+    loss = 0
+    draw = 0
+    for _ in tqdm(range(n), ncols=0):
         side = np.random.choice([1, -1])
         if verbose > 0:
             print(side)
-        i, o = one_episode(side, n_iter=n_iter, C=C, verbose=verbose)
+        i, o = one_episode(side, mcts_iter=mcts_iter, C=C, verbose=verbose,
+                           exploration=exploration)
         if i is not None and o is not None:
             inputs = np.vstack((inputs, i))
             outputs = vstack((outputs, o))
 
         if o[0, 0] == 1.:
             win += 1
-        if o[0, 0] != .5:
-            win_loss += 1
-    global winrate
-    winrate = win/win_loss
-    return inputs, outputs
+        elif o[0, 0] == 0.:
+            loss += 1
+        else:
+            draw += 1
+    return inputs, outputs, (win/n, draw/n, loss/n)
 
 
-def play_bot(state, model, n_iter=n_iter, C=C):
+def play_bot(state, model, mcts_iter=mcts_iter_default, C=0.):
     actions = state.get_actions()
-    policy = mcts(state, model, n_iter=n_iter, C=C)
+    policy = mcts(state, model, mcts_iter=mcts_iter, C=C)
     action = actions[np.argmax(policy)]
     return state.play(action)
 
 
-def play_game(state=initial_state, model=model, n_iter=n_iter, C=C):
+def play_game(state=initial_state, model=model,
+              mcts_iter=mcts_iter_default, C=0.):
     result = state.is_terminal()
     while not result[0]:
         print(state)
@@ -223,7 +235,7 @@ def play_game(state=initial_state, model=model, n_iter=n_iter, C=C):
                 print("Loss")
             return
 
-        state = play_bot(state, model, n_iter=n_iter, C=C).flip_board()
+        state = play_bot(state, model, mcts_iter=mcts_iter, C=C).flip_board()
         result = state.is_terminal()
 
     print()
@@ -236,18 +248,26 @@ def play_game(state=initial_state, model=model, n_iter=n_iter, C=C):
     return
 
 
-def train(train_iter=20, model=model, old_model=old_model, n_episodes=200,
-          mcts_iter=n_iter, C=C, winrate_threshold=.6):
-    global winrate
+def train(train_iter=20, model=model, old_model=old_model, n_episodes=100,
+          train_epochs=100, mcts_iter=mcts_iter_default, C=c_mcts,
+          winrate_threshold=.55, disp_winrate=False):
+    full_stats = []
     for i in range(train_iter):
-        res = dataset(n_episodes, verbose=0, n_iter=mcts_iter, C=3.)
-        model.fit(res[0], res[1], epochs=100, verbose=0)
+        inputs, outputs, stats = dataset(n_episodes, verbose=0,
+                                         mcts_iter=mcts_iter, C=C,
+                                         model=model,
+                                         old_model=old_model)
+        model.fit(inputs, outputs, epochs=train_epochs, verbose=0)
+        full_stats.append(stats)
 
+        winrate = stats[0]/(stats[0] + stats[2])
+
+        if disp_winrate:
+            print("Win/Draw/Loss (%) :", stats)
+            print("Winrate :", winrate)
         if winrate > winrate_threshold:
+            print("Old model updated")
             old_model.set_weights(model.get_weights())
-        print("Winrate:", winrate)
+            full_stats.append((0., 0., 0.))
 
-
-# train()
-# res = dataset(1000, verbose=0, C=0)
-# print("Winrate:", winrate)
+    return full_stats

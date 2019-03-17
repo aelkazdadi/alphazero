@@ -183,7 +183,7 @@ input_size = 98
 output_size = 1 + 7
 
 model = Sequential()
-model.add(Dense(256, input_dim=input_size,))
+model.add(Dense(2048, input_dim=input_size,))
 model.add(Activation('relu'))
 
 model.add(Dense(output_size))
