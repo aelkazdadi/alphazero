@@ -1,5 +1,5 @@
-from tqdm import tqdm
 import tictactoe as game
+from tqdm import tqdm
 
 import numpy as np
 from math import sqrt
@@ -31,8 +31,7 @@ class Tree:
         self.children = []
 
 
-def mcts(state, neural_network, mcts_iter=mcts_iter_default,
-         debug=False, C=c_mcts):
+def mcts(state, neural_network, mcts_iter=mcts_iter_default, C=c_mcts):
     tree = Tree(state)
 
     for _ in range(mcts_iter):
@@ -75,19 +74,6 @@ def mcts(state, neural_network, mcts_iter=mcts_iter_default,
     policy = [action.N for action in node.actions]
     if policy == []:
         return []
-
-    if debug:
-        for action in node.actions:
-            Q = "{:.3e}".format(action.Q)
-            P = "{:.3e}".format(action.P)
-            if Q[0] != "-":
-                Q = "+"+Q
-            if P[0] != "-":
-                P = "+"+P
-            print("{:<5}".format(action.N),
-                  "{:<10}".format(Q),
-                  "{:<10}".format(P),
-                  action)
 
     return np.array(policy)/sum(policy)
 
@@ -192,6 +178,7 @@ def dataset(n=200, verbose=0, mcts_iter=mcts_iter_default, C=c_mcts,
         if verbose > 0:
             print(side)
         i, o = one_episode(side, mcts_iter=mcts_iter, C=C, verbose=verbose,
+                           model=model, old_model=old_model,
                            exploration=exploration)
         if i is not None and o is not None:
             inputs = np.vstack((inputs, i))
