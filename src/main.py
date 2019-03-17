@@ -25,6 +25,10 @@ value_prior = game.value_prior
 
 class Tree:
     def __init__(self, state, parent=None):
+        """
+        Basic tree class, used for the monte carlo tree search.
+        Is instanciated with the root state.
+        """
         self.state = state
         self.parent = parent
         self.actions = []
@@ -33,18 +37,31 @@ class Tree:
 
 def mcts(state, neural_network, mcts_iter=mcts_iter_default, C=c_mcts):
     tree = Tree(state)
-
+    """
+    Function that operates the monte carlo tree search
+    starting from a given state.
+    :param state: state from which to start the mcts.
+        The class state is defined and documented in each game.
+    :param neural_network: implementation used is Keras.
+    :param mcts_iter: number of iterations.
+    :param C: Exploration rate parameter.
+    :return: np array, containing the improved policy.
+    """
     for _ in range(mcts_iter):
         node = tree
         children = node.children
+        # Traverse the tree until a leaf node is found.
         while children != []:
             sqrtN_tot = sqrt(sum([a.N for a in node.actions]))
-            ucb_index = np.argmax([a.Q + C*a.P*sqrtN_tot/(1+a.N)
-                                   for a in node.actions])
+            # Choose the child node with the largest PUCT
+            puct_max_index = np.argmax([a.Q + C*a.P*sqrtN_tot/(1+a.N)
+                                        for a in node.actions])
 
-            node = children[ucb_index]
+            node = children[puct_max_index]
             children = node.children
 
+        # Create children of the leaf node if it's not terminal
+        # Then propagate the values along the visited path of the tree
         terminal = node.state.is_terminal()
         if terminal[0]:
             value = terminal[1]
@@ -71,6 +88,7 @@ def mcts(state, neural_network, mcts_iter=mcts_iter_default, C=c_mcts):
             node.parent[1].N += 1
 
             node = node.parent[0]
+    # Improved policy is proportional to number of visits of each child node.
     policy = [action.N for action in node.actions]
     if policy == []:
         return []
@@ -82,6 +100,23 @@ def one_episode(side, max_turns=10000, verbose=0,
                 mcts_iter=mcts_iter_default, C=c_mcts,
                 model=model, old_model=old_model,
                 exploration=True):
+    """
+    Function that generates an episode of the game from a given perspective,
+    defined here as side.
+    :param side: -1:'black' or 1:'white'.
+    :param max_turns:  maximum number of turns.
+    :param verbose: amount of information to display.
+        0  : Nothing is printed.
+        1  : Outcome of the game is printed.
+        2+ : Each turn of the game is additionally printed.
+    :param mcts_iter: number of MCTS iterations.
+    :param C: exploration parameters.
+    :return: inputs:  Contains the visited states, in the form
+                      of neural network inputs.
+             ouptuts: Contains the outcome of the game,
+                      and the improved policies, in the form
+                      of neural network outputs.
+    """
     data = []
     state = initial_state
 
@@ -96,20 +131,25 @@ def one_episode(side, max_turns=10000, verbose=0,
             if verbose > 1:
                 print(white_header, end='')
                 print(state)
+            # Model is playing
             policy = mcts(state, model, mcts_iter=mcts_iter, C=C)
         else:
             if verbose > 1:
                 print(black_header, end='')
                 print(state.flip_board())
+            # Old model is playing
             policy = mcts(state, old_model, mcts_iter=mcts_iter, C=C)
         actions = state.get_actions()
 
         if exploration:
+            # Choose a move from the distribution given by the MCTS
             action = np.random.choice(actions, p=policy)
         else:
+            # Choose the best move given by the MCTS
             action = actions[np.argmax(policy)]
 
         if i % 2 == 0:
+            # Update data with the current state and generated policy
             data.append([state, actions, policy, None])
 
         state = state.play(action).flip_board()
@@ -120,6 +160,7 @@ def one_episode(side, max_turns=10000, verbose=0,
     if i == max_turns:
         return None, None
 
+    # Update outcome of the game in the data
     if result[1] == 0:
         result = .5
         if verbose > 1:
@@ -145,6 +186,7 @@ def one_episode(side, max_turns=10000, verbose=0,
     for i in range(len(data)):
         data[i][3] = result
 
+    # Transform the data into a sparse matrix
     inputs = np.zeros((len(data), input_size))
     dat = []
     indices = []
@@ -167,6 +209,12 @@ def one_episode(side, max_turns=10000, verbose=0,
 
 def dataset(n=200, verbose=0, mcts_iter=mcts_iter_default, C=c_mcts,
             model=model, old_model=old_model, exploration=True):
+    """
+    Generate a dataset by repeatedly pitting
+    two models against each other.
+    :param n: number of episodes to be simulated
+    """
+    # Initialize empty dataset
     inputs = np.zeros((0, input_size))
     outputs = csr_matrix((0, output_size))
 
@@ -175,15 +223,17 @@ def dataset(n=200, verbose=0, mcts_iter=mcts_iter_default, C=c_mcts,
     draw = 0
     for _ in tqdm(range(n), ncols=0):
         side = np.random.choice([1, -1])
-        if verbose > 0:
-            print(side)
+        # Play one episode as either the first or second player.
         i, o = one_episode(side, mcts_iter=mcts_iter, C=C, verbose=verbose,
                            model=model, old_model=old_model,
                            exploration=exploration)
+
+        # Append inputs and outputs to dataset
         if i is not None and o is not None:
             inputs = np.vstack((inputs, i))
             outputs = vstack((outputs, o))
 
+        # Update stats so far.
         if o[0, 0] == 1.:
             win += 1
         elif o[0, 0] == 0.:
@@ -194,6 +244,10 @@ def dataset(n=200, verbose=0, mcts_iter=mcts_iter_default, C=c_mcts,
 
 
 def play_bot(state, model, mcts_iter=mcts_iter_default, C=0.):
+    """
+    Esimtate the best action from a given state,
+    according to the MCTS generated by a given neural network.
+    """
     actions = state.get_actions()
     policy = mcts(state, model, mcts_iter=mcts_iter, C=C)
     action = actions[np.argmax(policy)]
@@ -202,6 +256,9 @@ def play_bot(state, model, mcts_iter=mcts_iter_default, C=0.):
 
 def play_game(state=initial_state, model=model,
               mcts_iter=mcts_iter_default, C=0.):
+    """
+    Play a game against a neural netork model.
+    """
     result = state.is_terminal()
     while not result[0]:
         print(state)
@@ -238,6 +295,14 @@ def play_game(state=initial_state, model=model,
 def train(train_iter=20, model=model, old_model=old_model, n_episodes=100,
           train_epochs=100, mcts_iter=mcts_iter_default, C=c_mcts,
           winrate_threshold=.55, disp_winrate=False):
+    """
+    Generate a dataset and train the neural
+    network on the obtained output, while updating the opponent
+    neural network once the model to be trained has sufficiently improved.
+
+    :param train_iter: Number of training iterations.
+    :param train_epochs: Neural network fitting iteration parameter
+    """
     full_stats = []
     for i in range(train_iter):
         inputs, outputs, stats = dataset(n_episodes, verbose=0,
